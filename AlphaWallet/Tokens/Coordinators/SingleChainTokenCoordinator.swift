@@ -403,7 +403,7 @@ class SingleChainTokenCoordinator: Coordinator {
         viewController.configure(viewModel: viewModel)
 
         viewController.navigationItem.leftBarButtonItem = UIBarButtonItem.backBarButton(selectionClosure: {
-            navigationController.popToRootViewController(animated: true)
+            navigationController.popViewController(animated: true)
         })
 
         navigationController.pushViewController(viewController, animated: true)
