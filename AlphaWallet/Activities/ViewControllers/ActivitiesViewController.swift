@@ -9,31 +9,24 @@ protocol ActivitiesViewControllerDelegate: class {
     func didPressTransaction(transaction: TransactionInstance, in viewController: ActivitiesViewController)
 }
 
-class ActivitiesViewController: UIViewController {
+protocol ActivitiesViewDelegate: class {
+    func didPressActivity(activity: Activity, in view: ActivitiesView)
+    func didPressTransaction(transaction: TransactionInstance, in view: ActivitiesView)
+}
+
+class ActivitiesView: UIView {
     private var viewModel: ActivitiesViewModel
-    private let wallet: AlphaWallet.Address
     private let sessions: ServerDictionary<WalletSession>
-    private let tokensStorages: ServerDictionary<TokensDataStore>
     private let tableView = UITableView(frame: .zero, style: .grouped)
-    private let searchController: UISearchController
-    private var isSearchBarConfigured = false
-    private var bottomConstraint: NSLayoutConstraint!
-    private lazy var keyboardChecker = KeyboardChecker(self, resetHeightDefaultValue: 0, ignoreBottomSafeArea: true)
 
-    var paymentType: PaymentFlow?
-    weak var delegate: ActivitiesViewControllerDelegate?
+    weak var delegate: ActivitiesViewDelegate?
 
-    init(viewModel: ActivitiesViewModel, wallet: AlphaWallet.Address, sessions: ServerDictionary<WalletSession>, tokensStorages: ServerDictionary<TokensDataStore>) {
+    init(viewModel: ActivitiesViewModel, sessions: ServerDictionary<WalletSession>) {
         self.viewModel = viewModel
-        self.wallet = wallet
         self.sessions = sessions
-        self.tokensStorages = tokensStorages
-        searchController = UISearchController(searchResultsController: nil)
-        super.init(nibName: nil, bundle: nil)
 
-        title = R.string.localizable.activityTabbarItemTitle()
-
-        view.backgroundColor = self.viewModel.backgroundColor
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
 
         tableView.register(ActivityViewCell.self)
         tableView.register(DefaultActivityItemViewCell.self)
@@ -46,209 +39,118 @@ class ActivitiesViewController: UIViewController {
         tableView.backgroundColor = viewModel.backgroundColor
         tableView.estimatedRowHeight = TokensCardViewController.anArbitraryRowHeightSoAutoSizingCellsWorkIniOS10
 
-        bottomConstraint = tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        keyboardChecker.constraint = bottomConstraint
-
-        view.addSubview(tableView)
+        addSubview(tableView)
 
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.topAnchor),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bottomConstraint,
+            tableView.topAnchor.constraint(equalTo: topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+
         emptyView = TransactionsEmptyView(title: R.string.localizable.activityEmpty(), image: R.image.activities_empty_list())
-
-        setupFilteringWithKeyword()
-        processSearchWithKeywords()
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-
-        keyboardChecker.viewWillAppear()
-        navigationItem.largeTitleDisplayMode = .always
+    required init?(coder: NSCoder) {
+        return nil
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        //NOTE: we call it here to show empty view if needed, as the reason that we don't have manually called callback where we can handle that loaded activities
-        //next time view will be updated when configure with viewModel method get called.
-        endLoading()
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        keyboardChecker.viewWillDisappear()
+    func reloadData() {
+        tableView.reloadData()
     }
 
     func configure(viewModel: ActivitiesViewModel) {
         self.viewModel = viewModel
-        processSearchWithKeywords()
-
-        endLoading()
     }
 
-    required init?(coder aDecoder: NSCoder) {
-        return nil
+    func applySearch(keyword: String?) {
+        viewModel.filter(.keyword(keyword))
+
+        reloadData()
     }
-
-    override func viewDidLayoutSubviews() {
-        configureSearchBarOnce()
-    }
-
-    fileprivate func headerView(for section: Int) -> UIView {
-        let container = UIView()
-        container.backgroundColor = viewModel.headerBackgroundColor
-        let title = UILabel()
-        title.text = viewModel.titleForHeader(in: section)
-        title.sizeToFit()
-        title.textColor = viewModel.headerTitleTextColor
-        title.font = viewModel.headerTitleFont
-        container.addSubview(title)
-        title.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            title.anchorsConstraint(to: container, edgeInsets: .init(top: 18, left: 20, bottom: 16, right: 0))
-        ])
-        return container
-    }
-
-    private func extractTokenAndActivityName(fromTransactionRow transactionRow: TransactionRow) -> (token: TokenObject, activityName: String)? {
-        enum TokenOperation {
-            case nativeCryptoTransfer(TokenObject)
-            case completedTransfer(TokenObject)
-            case pendingTransfer(TokenObject)
-            case completedErc20Approval(TokenObject)
-            case pendingErc20Approval(TokenObject)
-
-            var token: TokenObject {
-                switch self {
-                case .nativeCryptoTransfer(let token):
-                    return token
-                case .completedTransfer(let token):
-                    return token
-                case .pendingTransfer(let token):
-                    return token
-                case .completedErc20Approval(let token):
-                    return token
-                case .pendingErc20Approval(let token):
-                    return token
-                }
-            }
-        }
-
-        let erc20TokenOperation: TokenOperation?
-        if transactionRow.operation == nil {
-            erc20TokenOperation = .nativeCryptoTransfer(TokensDataStore.etherToken(forServer: transactionRow.server))
-        } else {
-            switch (transactionRow.state, transactionRow.operation?.operationType) {
-            case (.pending, .nativeCurrencyTokenTransfer), (.pending, .erc20TokenTransfer), (.pending, .erc721TokenTransfer), (.pending, .erc875TokenTransfer):
-                erc20TokenOperation = transactionRow.operation?.contractAddress.flatMap { tokensStorages[transactionRow.server].token(forContract: $0) }.flatMap { TokenOperation.pendingTransfer($0) }
-            case (.completed, .nativeCurrencyTokenTransfer), (.completed, .erc20TokenTransfer), (.completed, .erc721TokenTransfer), (.completed, .erc875TokenTransfer):
-                erc20TokenOperation = transactionRow.operation?.contractAddress.flatMap { tokensStorages[transactionRow.server].token(forContract: $0) }.flatMap { TokenOperation.completedTransfer($0) }
-                    //Explicitly listing out combinations so future changes to enums will be caught by compiler
-            case (.pending, .erc20TokenApprove):
-                erc20TokenOperation = transactionRow.operation?.contractAddress.flatMap { tokensStorages[transactionRow.server].token(forContract: $0) }.flatMap { TokenOperation.pendingErc20Approval($0) }
-            case (.completed, .erc20TokenApprove):
-                erc20TokenOperation = transactionRow.operation?.contractAddress.flatMap { tokensStorages[transactionRow.server].token(forContract: $0) }.flatMap { TokenOperation.completedErc20Approval($0) }
-            case (.unknown, _), (.error, _), (.failed, _), (_, .unknown), (.completed, .none), (.pending, nil):
-                erc20TokenOperation = .none
-            }
-        }
-        guard let token = erc20TokenOperation?.token else { return nil }
-        let activityName: String
-        switch erc20TokenOperation {
-        case .nativeCryptoTransfer, .completedTransfer, .pendingTransfer, .none:
-            if wallet.sameContract(as: transactionRow.from) {
-                activityName = "sent"
-            } else {
-                activityName = "received"
-            }
-        case .completedErc20Approval, .pendingErc20Approval:
-            activityName = "ownerApproved"
-        }
-        return (token: token, activityName: activityName)
-    }
-
-    private func createPseudoActivity(fromTransactionRow transactionRow: TransactionRow) -> Activity? {
-        guard let (token, activityName) = extractTokenAndActivityName(fromTransactionRow: transactionRow) else { return nil }
-        var cardAttributes = [AttributeId: AssetInternalValue]()
-        cardAttributes["symbol"] = .string(transactionRow.server.symbol)
-
-        if let operation = transactionRow.operation, operation.symbol != nil, let value = BigUInt(operation.value) {
-            cardAttributes["amount"] = .uint(value)
-        } else {
-            if let value = BigUInt(transactionRow.value) {
-                cardAttributes["amount"] = .uint(value)
-            }
-        }
-
-        if let value = AlphaWallet.Address(string: transactionRow.from) {
-            cardAttributes["from"] = .address(value)
-        }
-
-        if let toString = transactionRow.operation?.to, let to = AlphaWallet.Address(string: toString) {
-            cardAttributes["to"] = .address(to)
-        } else {
-            if let value = AlphaWallet.Address(string: transactionRow.to) {
-                cardAttributes["to"] = .address(value)
-            }
-        }
-
-        var timestamp: GeneralisedTime = .init()
-        timestamp.date = transactionRow.date
-        cardAttributes["timestamp"] = .generalisedTime(timestamp)
-        let state: Activity.State
-        switch transactionRow.state {
-        case .pending:
-            state = .pending
-        case .completed:
-            state = .completed
-        case .error, .failed:
-            state = .failed
-        //TODO we don't need the other states at the moment
-        case .unknown:
-            state = .completed
-        }
-        let rowType: ActivityRowType
-        switch transactionRow {
-        case .standalone:
-            rowType = .standalone
-        case .group:
-            rowType = .group
-        case .item:
-            rowType = .item
-        }
-        return .init(
-                //We only use this ID for refreshing the display of specific activity, since the display for ETH send/receives don't ever need to be refreshed, just need a number that don't clash with other activities
-                id: transactionRow.blockNumber + 10000000,
-                rowType: rowType,
-                tokenObject: Activity.AssignedToken(tokenObject: token),
-                server: transactionRow.server,
-                name: activityName,
-                eventName: activityName,
-                blockNumber: transactionRow.blockNumber,
-                transactionId: transactionRow.id,
-                transactionIndex: transactionRow.transactionIndex,
-                //We don't use this for transactions, so it's ok
-                logIndex: 0,
-                date: transactionRow.date,
-                values: (token: .init(), card: cardAttributes),
-                view: (html: "", style: ""),
-                itemView: (html: "", style: ""),
-                isBaseCard: true,
-                state: state
-        )
-    }
+//<<<<<<< HEAD
+//
+//    private func createPseudoActivity(fromTransactionRow transactionRow: TransactionRow) -> Activity? {
+//        guard let (token, activityName) = extractTokenAndActivityName(fromTransactionRow: transactionRow) else { return nil }
+//        var cardAttributes = [AttributeId: AssetInternalValue]()
+//        cardAttributes["symbol"] = .string(transactionRow.server.symbol)
+//
+//        if let operation = transactionRow.operation, operation.symbol != nil, let value = BigUInt(operation.value) {
+//            cardAttributes["amount"] = .uint(value)
+//        } else {
+//            if let value = BigUInt(transactionRow.value) {
+//                cardAttributes["amount"] = .uint(value)
+//            }
+//        }
+//
+//        if let value = AlphaWallet.Address(string: transactionRow.from) {
+//            cardAttributes["from"] = .address(value)
+//        }
+//
+//        if let toString = transactionRow.operation?.to, let to = AlphaWallet.Address(string: toString) {
+//            cardAttributes["to"] = .address(to)
+//        } else {
+//            if let value = AlphaWallet.Address(string: transactionRow.to) {
+//                cardAttributes["to"] = .address(value)
+//            }
+//        }
+//
+//        var timestamp: GeneralisedTime = .init()
+//        timestamp.date = transactionRow.date
+//        cardAttributes["timestamp"] = .generalisedTime(timestamp)
+//        let state: Activity.State
+//        switch transactionRow.state {
+//        case .pending:
+//            state = .pending
+//        case .completed:
+//            state = .completed
+//        case .error, .failed:
+//            state = .failed
+//        //TODO we don't need the other states at the moment
+//        case .unknown:
+//            state = .completed
+//        }
+//        let rowType: ActivityRowType
+//        switch transactionRow {
+//        case .standalone:
+//            rowType = .standalone
+//        case .group:
+//            rowType = .group
+//        case .item:
+//            rowType = .item
+//        }
+//        return .init(
+//                //We only use this ID for refreshing the display of specific activity, since the display for ETH send/receives don't ever need to be refreshed, just need a number that don't clash with other activities
+//                id: transactionRow.blockNumber + 10000000,
+//                rowType: rowType,
+//                tokenObject: Activity.AssignedToken(tokenObject: token),
+//                server: transactionRow.server,
+//                name: activityName,
+//                eventName: activityName,
+//                blockNumber: transactionRow.blockNumber,
+//                transactionId: transactionRow.id,
+//                transactionIndex: transactionRow.transactionIndex,
+//                //We don't use this for transactions, so it's ok
+//                logIndex: 0,
+//                date: transactionRow.date,
+//                values: (token: .init(), card: cardAttributes),
+//                view: (html: "", style: ""),
+//                itemView: (html: "", style: ""),
+//                isBaseCard: true,
+//                state: state
+//        )
+//    }
+//=======
+//>>>>>>> Build the Info tab for fungibles (native crypto + ERC20) and move the most recent 3 transactions into the Activity tab #2748
 }
 
-extension ActivitiesViewController: StatefulViewController {
+extension ActivitiesView: StatefulViewController {
     func hasContent() -> Bool {
         return viewModel.numberOfSections > 0
     }
 }
 
-extension ActivitiesViewController: UITableViewDelegate {
+extension ActivitiesView: UITableViewDelegate {
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true )
         let item = viewModel.item(for: indexPath.row, section: indexPath.section)
@@ -257,14 +159,14 @@ extension ActivitiesViewController: UITableViewDelegate {
             break
         case .childActivity(_, activity: let activity):
             delegate?.didPressActivity(activity: activity, in: self)
-        case .childTransaction(transaction: let transaction, operation: let operation):
-            if let activity = createPseudoActivity(fromTransactionRow: .item(transaction: transaction, operation: operation)) {
+        case .childTransaction(let transaction, _, let activity):
+            if let activity = activity {
                 delegate?.didPressActivity(activity: activity, in: self)
             } else {
                 delegate?.didPressTransaction(transaction: transaction, in: self)
             }
-        case .standaloneTransaction(transaction: let transaction):
-            if let activity = createPseudoActivity(fromTransactionRow: .standalone(transaction)) {
+        case .standaloneTransaction(transaction: let transaction, let activity):
+            if let activity = activity {
                 delegate?.didPressActivity(activity: activity, in: self)
             } else {
                 delegate?.didPressTransaction(transaction: transaction, in: self)
@@ -293,7 +195,7 @@ extension ActivitiesViewController: UITableViewDelegate {
     }
 }
 
-extension ActivitiesViewController: UITableViewDataSource {
+extension ActivitiesView: UITableViewDataSource {
     func numberOfSections(in tableView: UITableView) -> Int {
         return viewModel.numberOfSections
     }
@@ -321,8 +223,8 @@ extension ActivitiesViewController: UITableViewDataSource {
                 cell.configure(viewModel: .init(activity: activity))
                 return cell
             }
-        case .childTransaction(transaction: let transaction, operation: let operation):
-            if let activity = createPseudoActivity(fromTransactionRow: .item(transaction: transaction, operation: operation)) {
+        case .childTransaction(transaction: let transaction, operation: let operation, let activity):
+            if let activity = activity {
                 let cell: DefaultActivityItemViewCell = tableView.dequeueReusableCell(for: indexPath)
                 cell.configure(viewModel: .init(activity: activity))
                 return cell
@@ -332,8 +234,8 @@ extension ActivitiesViewController: UITableViewDataSource {
                 cell.configure(viewModel: .init(transactionRow: .item(transaction: transaction, operation: operation), chainState: session.chainState, currentWallet: session.account, server: transaction.server))
                 return cell
             }
-        case .standaloneTransaction(transaction: let transaction):
-            if let activity = createPseudoActivity(fromTransactionRow: .standalone(transaction)) {
+        case .standaloneTransaction(transaction: let transaction, let activity):
+            if let activity = activity {
                 let cell: DefaultActivityItemViewCell = tableView.dequeueReusableCell(for: indexPath)
                 cell.configure(viewModel: .init(activity: activity))
                 return cell
@@ -367,6 +269,109 @@ extension ActivitiesViewController: UITableViewDataSource {
 
     func tableView(_ tableView: UITableView, willDisplayHeaderView view: UIView, forSection section: Int) {
     }
+
+    fileprivate func headerView(for section: Int) -> UIView {
+        let container = UIView()
+        container.backgroundColor = viewModel.headerBackgroundColor
+        let title = UILabel()
+        title.text = viewModel.titleForHeader(in: section)
+        title.sizeToFit()
+        title.textColor = viewModel.headerTitleTextColor
+        title.font = viewModel.headerTitleFont
+        container.addSubview(title)
+        title.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            title.anchorsConstraint(to: container, edgeInsets: .init(top: 18, left: 20, bottom: 16, right: 0))
+        ])
+        return container
+    }
+}
+
+class ActivitiesViewController: UIViewController {
+    private var viewModel: ActivitiesViewModel
+    private let sessions: ServerDictionary<WalletSession>
+    private let searchController: UISearchController
+    private var isSearchBarConfigured = false
+    private var bottomConstraint: NSLayoutConstraint!
+    private lazy var keyboardChecker = KeyboardChecker(self, resetHeightDefaultValue: 0, ignoreBottomSafeArea: true)
+    private lazy var activitiesView: ActivitiesView = {
+        let view = ActivitiesView(viewModel: viewModel, sessions: sessions)
+        view.delegate = self
+        return view
+    }()
+    weak var delegate: ActivitiesViewControllerDelegate?
+
+    init(viewModel: ActivitiesViewModel, sessions: ServerDictionary<WalletSession>) {
+        self.viewModel = viewModel
+        self.sessions = sessions
+        searchController = UISearchController(searchResultsController: nil)
+        super.init(nibName: nil, bundle: nil)
+
+        title = R.string.localizable.activityTabbarItemTitle()
+
+        view.backgroundColor = self.viewModel.backgroundColor
+
+        bottomConstraint = activitiesView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        keyboardChecker.constraint = bottomConstraint
+
+        view.addSubview(activitiesView)
+
+        NSLayoutConstraint.activate([
+            activitiesView.topAnchor.constraint(equalTo: view.topAnchor),
+            activitiesView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            activitiesView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottomConstraint,
+        ])
+
+        setupFilteringWithKeyword()
+        configure(viewModel: viewModel)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+
+        keyboardChecker.viewWillAppear()
+        navigationItem.largeTitleDisplayMode = .always
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        //NOTE: we call it here to show empty view if needed, as the reason that we don't have manually called callback where we can handle that loaded activities
+        //next time view will be updated when configure with viewModel method get called.
+        activitiesView.endLoading()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        keyboardChecker.viewWillDisappear()
+    }
+
+    func configure(viewModel: ActivitiesViewModel) {
+        self.viewModel = viewModel
+
+        activitiesView.configure(viewModel: viewModel)
+        activitiesView.applySearch(keyword: searchController.searchBar.text)
+
+        activitiesView.endLoading()
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        return nil
+    }
+
+    override func viewDidLayoutSubviews() {
+        configureSearchBarOnce()
+    }
+}
+
+extension ActivitiesViewController: ActivitiesViewDelegate {
+    func didPressActivity(activity: Activity, in view: ActivitiesView) {
+        delegate?.didPressActivity(activity: activity, in: self)
+    }
+
+    func didPressTransaction(transaction: TransactionInstance, in view: ActivitiesView) {
+        delegate?.didPressTransaction(transaction: transaction, in: self)
+    }
 }
 
 extension ActivitiesViewController: UISearchResultsUpdating {
@@ -377,10 +382,7 @@ extension ActivitiesViewController: UISearchResultsUpdating {
     }
 
     private func processSearchWithKeywords() {
-        let keyword = searchController.searchBar.text
-        viewModel.filter(.keyword(keyword))
-
-        tableView.reloadData()
+        activitiesView.applySearch(keyword: searchController.searchBar.text)
     }
 
 }

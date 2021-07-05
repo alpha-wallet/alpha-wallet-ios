@@ -3,7 +3,12 @@
 import Foundation
 
 //TODO probably should have an ID which is really good for debugging
-open class Subscribable<T> {
+open class Subscribable<T>: Hashable {
+    
+    public static func == (lhs: Subscribable<T>, rhs: Subscribable<T>) -> Bool {
+        return lhs.uuid == rhs.uuid
+    }
+
     public struct SubscribableKey: Hashable {
         let id = UUID()
     }
@@ -30,6 +35,8 @@ open class Subscribable<T> {
         }
     }
 
+    private let uuid = UUID()
+
     public init(_ value: T?) {
         _value = value
     }
@@ -52,5 +59,9 @@ open class Subscribable<T> {
 
     func unsubscribe(_ key: SubscribableKey) {
         _subscribers.removeValue(forKey: key)
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(uuid)
     }
 }
