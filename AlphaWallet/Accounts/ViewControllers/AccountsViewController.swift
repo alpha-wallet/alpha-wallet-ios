@@ -120,7 +120,7 @@ class AccountsViewController: UIViewController {
     private func getAccountViewModels(for path: IndexPath) -> AccountViewModel? {
         guard let account = viewModel.account(for: path) else { return nil }
         let walletName = viewModel.walletName(forAccount: account)
-        let balance = self.balances[account.address].flatMap { $0 }
+        let balance = balances[account.address].flatMap { $0 }
         return AccountViewModel(wallet: account, current: keystore.currentWallet, walletBalance: balance, server: balanceCoordinator.server, walletName: walletName)
     }
 
@@ -204,8 +204,8 @@ extension AccountsViewController: UITableViewDelegate {
 
     func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
 
-        let copyAction = UIContextualAction(style: .normal, title: R.string.localizable.copyAddress()) { _, _, complete in
-            guard let account = self.viewModel.account(for: indexPath) else { return }
+        let copyAction = UIContextualAction(style: .normal, title: R.string.localizable.copyAddress()) { [weak self] _, _, complete in
+            guard let account = self?.viewModel.account(for: indexPath) else { return }
             UIPasteboard.general.string = account.address.eip55String
             complete(true)
         }
@@ -213,9 +213,9 @@ extension AccountsViewController: UITableViewDelegate {
         copyAction.image = R.image.copy()?.withRenderingMode(.alwaysTemplate)
         copyAction.backgroundColor = R.color.azure()
 
-        let deleteAction = UIContextualAction(style: .normal, title: R.string.localizable.accountsConfirmDeleteAction()) { _, _, complete in
-            guard let account = self.viewModel.account(for: indexPath) else { return }
-            self.confirmDelete(account: account)
+        let deleteAction = UIContextualAction(style: .normal, title: R.string.localizable.accountsConfirmDeleteAction()) { [weak self] _, _, complete in
+            guard let account = self?.viewModel.account(for: indexPath) else { return }
+            self?.confirmDelete(account: account)
 
             complete(true)
         }

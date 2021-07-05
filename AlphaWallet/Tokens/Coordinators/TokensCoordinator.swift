@@ -127,6 +127,11 @@ class TokensCoordinator: Coordinator {
         showTokens()
     }
 
+    deinit {
+        autoDetectTransactedTokensQueue.cancelAllOperations()
+        autoDetectTokensQueue.cancelAllOperations()
+    }
+
     private func setupSingleChainTokenCoordinators() {
         for each in tokenCollection.tokenDataStores {
             let server = each.server

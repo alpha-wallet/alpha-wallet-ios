@@ -407,7 +407,6 @@ private class PrivateXMLHandler {
             index: UInt16,
             inWallet account: Wallet,
             server: RPCServer,
-            callForAssetAttributeCoordinator: CallForAssetAttributeCoordinator,
             tokenType: TokenType
     ) -> Token {
         guard tokenIdOrEvent.tokenId != 0 else { return .empty }
@@ -721,7 +720,7 @@ private class ThreadSafeXmlHandlersCache {
 /// This class delegates all the functionality to a singleton of the actual XML parser. 1 for each contract. So we just parse the XML file 1 time only for each contract
 public class XMLHandler {
     //TODO not the best thing to have, especially because it's an optional
-    static var callForAssetAttributeCoordinators: ServerDictionary<CallForAssetAttributeCoordinator>?
+    static var callForAssetAttributeCoordinators: ServerDictionary<CallForAssetAttributeCoordinator> = .init()
     fileprivate static var xmlHandlers = ThreadSafeXmlHandlersCache()
     fileprivate static var baseXmlHandlers = ThreadSafeBaseXmlHandlersCache()
     private let privateXMLHandler: PrivateXMLHandler
@@ -930,10 +929,9 @@ public class XMLHandler {
 
     func getToken(name: String, symbol: String, fromTokenIdOrEvent tokenIdOrEvent: TokenIdOrEvent, index: UInt16, inWallet account: Wallet, server: RPCServer, tokenType: TokenType) -> Token {
         //TODO get rid of the forced unwrap
-        let callForAssetAttributeCoordinator = (XMLHandler.callForAssetAttributeCoordinators?[server])!
-        let overrides = privateXMLHandler.getToken(name: name, symbol: symbol, fromTokenIdOrEvent: tokenIdOrEvent, index: index, inWallet: account, server: server, callForAssetAttributeCoordinator: callForAssetAttributeCoordinator, tokenType: tokenType)
+        let overrides = privateXMLHandler.getToken(name: name, symbol: symbol, fromTokenIdOrEvent: tokenIdOrEvent, index: index, inWallet: account, server: server, tokenType: tokenType)
         if let baseXMLHandler = baseXMLHandler {
-            let base = baseXMLHandler.getToken(name: name, symbol: symbol, fromTokenIdOrEvent: tokenIdOrEvent, index: index, inWallet: account, server: server, callForAssetAttributeCoordinator: callForAssetAttributeCoordinator, tokenType: tokenType)
+            let base = baseXMLHandler.getToken(name: name, symbol: symbol, fromTokenIdOrEvent: tokenIdOrEvent, index: index, inWallet: account, server: server, tokenType: tokenType)
             let baseValues = base.values
             let overriddenValues = overrides.values
             return Token(

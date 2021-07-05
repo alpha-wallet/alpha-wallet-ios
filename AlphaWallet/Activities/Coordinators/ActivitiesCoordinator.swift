@@ -117,7 +117,7 @@ class ActivitiesCoordinator: Coordinator {
     }
 
     private func makeActivitiesViewController() -> ActivitiesViewController {
-        let viewModel = ActivitiesViewModel(tokensStorages: tokensStorages)
+        let viewModel = ActivitiesViewModel()
         let controller = ActivitiesViewController(viewModel: viewModel, wallet: wallet.address, sessions: sessions, tokensStorages: tokensStorages)
         controller.delegate = self
 
@@ -341,7 +341,7 @@ class ActivitiesCoordinator: Coordinator {
         queue2.async {
             let activities = ActivitiesViewModel.sorted(activities: items)
             DispatchQueue.main.async {
-                self.rootViewController.configure(viewModel: .init(tokensStorages: self.tokensStorages, activities: activities))
+                self.rootViewController.configure(viewModel: .init(activities: activities))
             }
         }
     }

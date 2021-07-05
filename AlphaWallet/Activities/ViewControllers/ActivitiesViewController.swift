@@ -20,7 +20,6 @@ class ActivitiesViewController: UIViewController {
     private var bottomConstraint: NSLayoutConstraint!
     private lazy var keyboardChecker = KeyboardChecker(self, resetHeightDefaultValue: 0, ignoreBottomSafeArea: true)
 
-    var paymentType: PaymentFlow?
     weak var delegate: ActivitiesViewControllerDelegate?
 
     init(viewModel: ActivitiesViewModel, wallet: AlphaWallet.Address, sessions: ServerDictionary<WalletSession>, tokensStorages: ServerDictionary<TokensDataStore>) {

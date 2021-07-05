@@ -69,7 +69,7 @@ enum ActivityRowModel {
         }
     }
 
-    func getTokenSymbol(fromTokensStorages tokensStorages: ServerDictionary<TokensDataStore>) -> String? {
+    func getTokenSymbol() -> String? {
         switch self {
         case .parentTransaction:
             return nil

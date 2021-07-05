@@ -12,7 +12,7 @@ import UserNotifications
 // swiftlint:disable type_body_length
 class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionDataCoordinator {
     private let storage: TransactionsStorage
-    let session: WalletSession
+    private let session: WalletSession
     private let keystore: Keystore
     private let tokensStorage: TokensDataStore
     private let promptBackupCoordinator: PromptBackupCoordinator
@@ -63,6 +63,10 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
         updateTransactionsTimer = nil
     }
 
+    deinit {
+        fetchLatestTransactionsQueue.cancelAllOperations()
+    }
+
     func runScheduledTimers() {
         guard timer == nil, updateTransactionsTimer == nil else {
             return
@@ -96,8 +100,8 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
         let server = session.server
         let wallet = session.account.address
 
-        let startBlock = Config.getLastFetchedErc20InteractionBlockNumber(session.server, wallet: wallet).flatMap { $0 + 1 }
-        GetContractInteractions(queue: self.queue).getErc20Interactions(address: wallet, server: server, startBlock: startBlock) { [weak self] result in
+        let startBlock = Config.getLastFetchedErc20InteractionBlockNumber(server, wallet: wallet).flatMap { $0 + 1 }
+        GetContractInteractions(queue: queue).getErc20Interactions(address: wallet, server: server, startBlock: startBlock) { [weak self] result in
             guard let strongSelf = self else { return }
 
             let blockNumbers = result.map(\.blockNumber)
@@ -126,8 +130,8 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
         let server = session.server
         let wallet = session.account.address
 
-        let startBlock = Config.getLastFetchedErc721InteractionBlockNumber(session.server, wallet: wallet).flatMap { $0 + 1 }
-        GetContractInteractions(queue: self.queue).getErc721Interactions(address: wallet, server: server, startBlock: startBlock) { [weak self] result in
+        let startBlock = Config.getLastFetchedErc721InteractionBlockNumber(server, wallet: wallet).flatMap { $0 + 1 }
+        GetContractInteractions(queue: queue).getErc721Interactions(address: wallet, server: server, startBlock: startBlock) { [weak self] result in
             guard let strongSelf = self else { return }
 
             let blockNumbers = result.map(\.blockNumber)
@@ -150,42 +154,45 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
     }
 
     private func backFillTransactionGroup(_ transactionsToFill: [TransactionInstance], startBlock: Int, endBlock: Int) -> Promise<[TransactionInstance]> {
-        return firstly {
-            fetchTransactions(for: session.account.address, startBlock: startBlock, endBlock: endBlock, sortOrder: .asc)
-        }.map(on: self.queue) { fillerTransactions -> [TransactionInstance] in
-            var results: [TransactionInstance] = .init()
-            for each in transactionsToFill {
-                //ERC20 transactions are expected to have operations because of the API we use to retrieve them from
-                guard !each.localizedOperations.isEmpty else { continue }
-                if var transaction = fillerTransactions.first(where: { $0.blockNumber == each.blockNumber }) {
-                    transaction.isERC20Interaction = true
-                    transaction.localizedOperations = each.localizedOperations
-                    results.append(transaction)
-                } else {
-                    results.append(each)
+        fetchTransactions(for: session.account.address, startBlock: startBlock, endBlock: endBlock, sortOrder: .asc)
+            .map(on: queue) { fillerTransactions -> [TransactionInstance] in
+                var results: [TransactionInstance] = .init()
+                for each in transactionsToFill {
+                    //ERC20 transactions are expected to have operations because of the API we use to retrieve them from
+                    guard !each.localizedOperations.isEmpty else { continue }
+                    if var transaction = fillerTransactions.first(where: { $0.blockNumber == each.blockNumber }) {
+                        transaction.isERC20Interaction = true
+                        transaction.localizedOperations = each.localizedOperations
+                        results.append(transaction)
+                    } else {
+                        results.append(each)
+                    }
                 }
+                return results
             }
-            return results
-        }
     }
 
     func fetch() {
-        self.queue.async {
+        queue.async { [weak self] in
+            guard let strongSelf = self else { return }
+
             DispatchQueue.main.async {
-                self.session.refresh(.balance)
+                strongSelf.session.refresh(.balance)
             }
 
-            self.fetchLatestTransactions()
-            self.fetchPendingTransactions()
+            strongSelf.fetchLatestTransactions()
+            strongSelf.fetchPendingTransactions()
         }
     }
 
     private func update(items: [TransactionInstance]) {
         guard !items.isEmpty else { return }
 
-        filterTransactionsToPullContractsFrom(items).done(on: self.queue, { transactionsToPullContractsFrom, contractsAndTokenTypes in
-            self.storage.add(transactions: items, transactionsToPullContractsFrom: transactionsToPullContractsFrom, contractsAndTokenTypes: contractsAndTokenTypes)
-            self.delegate?.handleUpdateItems(inCoordinator: self, reloadImmediately: false)
+        filterTransactionsToPullContractsFrom(items).done(on: queue, { [weak self] transactionsToPullContractsFrom, contractsAndTokenTypes in
+            guard let strongSelf = self else { return }
+
+            strongSelf.storage.add(transactions: items, transactionsToPullContractsFrom: transactionsToPullContractsFrom, contractsAndTokenTypes: contractsAndTokenTypes)
+            strongSelf.delegate?.handleUpdateItems(inCoordinator: strongSelf, reloadImmediately: false)
         }).cauterize()
     }
 
@@ -227,8 +234,8 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
     }
 
     private func fetchPendingTransactions() {
-        storage.pendingObjects.forEach {
-            self.updatePendingTransaction($0)
+        for each in storage.pendingObjects {
+            updatePendingTransaction(each)
         }
     }
 
@@ -237,23 +244,27 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
 
         firstly {
             Session.send(EtherServiceRequest(server: session.server, batch: BatchFactory().create(request)))
-        }.done { pendingTransaction in
+        }.done { [weak self] pendingTransaction in
+            guard let strongSelf = self else { return }
+
             if let blockNumber = Int(pendingTransaction.blockNumber), blockNumber > 0 {
                 //NOTE: We dont want to call function handleUpdateItems: twice because it will be updated in update(items:
-                self.update(state: .completed, for: transaction, withPendingTransaction: pendingTransaction, shouldUpdateItems: false)
-                self.update(items: [transaction])
+                strongSelf.update(state: .completed, for: transaction, withPendingTransaction: pendingTransaction, shouldUpdateItems: false)
+                strongSelf.update(items: [transaction])
             }
-        }.catch { error in
+        }.catch { [weak self] error in
+            guard let strongSelf = self else { return }
+
             switch error as? SessionTaskError {
             case .responseError(let error):
                 // TODO: Think about the logic to handle pending transactions.
                 //TODO we need to detect when a transaction is marked as failed by the node?
                 switch error as? JSONRPCError {
                 case .responseError:
-                    self.delete(transactions: [transaction])
+                    strongSelf.delete(transactions: [transaction])
                 case .resultObjectParseError:
-                    if self.storage.hasCompletedTransaction(withNonce: transaction.nonce) {
-                        self.delete(transactions: [transaction])
+                    if strongSelf.storage.hasCompletedTransaction(withNonce: transaction.nonce) {
+                        strongSelf.delete(transactions: [transaction])
                     }
                     //The transaction might not be posted to this node yet (ie. it doesn't even think that this transaction is pending). Especially common if we post a transaction to TaiChi and fetch pending status through Etherscan
                 case .responseNotFound, .errorObjectParseError, .unsupportedVersion, .unexpectedTypeObject, .missingBothResultAndError, .nonArrayResponse, .none:
@@ -266,16 +277,18 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
     }
 
     private func delete(transactions: [TransactionInstance]) {
-        storage.delete(transactions: transactions).done({ _ in
-            self.delegate?.handleUpdateItems(inCoordinator: self, reloadImmediately: true)
+        storage.delete(transactions: transactions).done({ [weak self] _ in
+            guard let strongSelf = self else { return }
+
+            strongSelf.delegate?.handleUpdateItems(inCoordinator: strongSelf, reloadImmediately: true)
         }).cauterize()
     }
 
     private func update(state: TransactionState, for transaction: TransactionInstance, withPendingTransaction pendingTransaction: PendingTransaction?, shouldUpdateItems: Bool = true) {
-        storage.update(state: state, for: transaction.primaryKey, withPendingTransaction: pendingTransaction).done(on: self.queue, { _ in
-            guard shouldUpdateItems else { return }
+        storage.update(state: state, for: transaction.primaryKey, withPendingTransaction: pendingTransaction).done(on: queue, { [weak self] _ in
+            guard let strongSelf = self, shouldUpdateItems else { return }
 
-            self.delegate?.handleUpdateItems(inCoordinator: self, reloadImmediately: false)
+            strongSelf.delegate?.handleUpdateItems(inCoordinator: strongSelf, reloadImmediately: false)
         }).cauterize()
     }
 
@@ -297,7 +310,7 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
             sortOrder = .desc
         }
 
-        let operation = FetchLatestTransactionsOperation(forSession: session, coordinator: self, startBlock: startBlock, sortOrder: sortOrder, queue: self.queue)
+        let operation = FetchLatestTransactionsOperation(forSession: session, coordinator: self, startBlock: startBlock, sortOrder: sortOrder, queue: queue)
         fetchLatestTransactionsQueue.addOperation(operation)
     }
 
@@ -394,11 +407,11 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
             endBlock: endBlock,
             sortOrder: sortOrder
         ))
-        .map(on: self.queue) {
+        .map(on: queue) {
             try $0.map(ArrayResponse<RawTransaction>.self).result.map {
                 TransactionInstance.from(transaction: $0, tokensStorage: self.tokensStorage)
             }
-        }.then(on: self.queue) {
+        }.then(on: queue) {
             when(fulfilled: $0).compactMap(on: self.queue) {
                 $0.compactMap { $0 }
             }
@@ -409,7 +422,7 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
         guard let oldestCachedTransaction = storage.completedObjects.last else { return }
 
         let promise = fetchTransactions(for: address, startBlock: 1, endBlock: oldestCachedTransaction.blockNumber - 1, sortOrder: .desc)
-        promise.done(on: self.queue, { [weak self] transactions in
+        promise.done(on: queue, { [weak self] transactions in
             guard let strongSelf = self else { return }
 
             strongSelf.update(items: transactions)
@@ -422,7 +435,7 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
                     strongSelf.fetchOlderTransactions(for: address)
                 }
             }
-        }).catch(on: self.queue) { [weak self] _ in
+        }).catch(on: queue) { [weak self] _ in
             guard let strongSelf = self else { return }
 
             strongSelf.transactionsTracker.fetchingState = .failed
@@ -443,7 +456,6 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
 
     //This inner class reaches into the internals of its outer coordinator class to call some methods. It exists so we can wrap operations into an Operation class and feed it into a queue, so we don't put much logic into it
     class FetchLatestTransactionsOperation: Operation {
-        private let session: WalletSession
         weak private var coordinator: SingleChainTransactionEtherscanDataCoordinator?
         private let startBlock: Int
         private let sortOrder: AlphaWalletService.SortOrder
@@ -457,9 +469,10 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
             return true
         }
         private let queue: DispatchQueue
+        private let contractAddress: AlphaWallet.Address
 
         init(forSession session: WalletSession, coordinator: SingleChainTransactionEtherscanDataCoordinator, startBlock: Int, sortOrder: AlphaWalletService.SortOrder, queue: DispatchQueue) {
-            self.session = session
+            self.contractAddress = session.account.address
             self.coordinator = coordinator
             self.startBlock = startBlock
             self.sortOrder = sortOrder
@@ -472,7 +485,7 @@ class SingleChainTransactionEtherscanDataCoordinator: SingleChainTransactionData
             guard let coordinator = self.coordinator else { return }
 
             firstly {
-                coordinator.fetchTransactions(for: session.account.address, startBlock: startBlock, sortOrder: sortOrder)
+                coordinator.fetchTransactions(for: contractAddress, startBlock: startBlock, sortOrder: sortOrder)
             }.then(on: .main, { transactions -> Promise<[TransactionInstance]> in
                 //NOTE: we want to perform notification creating on main thread
                 coordinator.notifyUserEtherReceived(inNewTransactions: transactions)

@@ -16,6 +16,15 @@ struct ServerDictionary<T> {
         }
     }
 
+    subscript(safe server: RPCServer) -> T? {
+        get {
+            return backingStore[server]
+        }
+        set(value) {
+            backingStore[server] = value
+        }
+    }
+
     var values: [T] {
         return Array(backingStore.values)
     }

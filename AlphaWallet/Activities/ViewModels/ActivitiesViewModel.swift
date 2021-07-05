@@ -8,19 +8,15 @@ enum ActivityOrTransactionFilter {
 }
 
 struct ActivitiesViewModel {
-    private static var formatter: DateFormatter {
-        return Date.formatter(with: "dd MMM yyyy")
-    }
+    private static var formatter: DateFormatter = Date.formatter(with: "dd MMM yyyy")
 
     typealias MappedToDateActivityOrTransaction = (date: String, items: [ActivityRowModel])
 
     private var items: [MappedToDateActivityOrTransaction] = []
     private var filteredItems: [MappedToDateActivityOrTransaction] = []
-    private let tokensStorages: ServerDictionary<TokensDataStore>
 
-    init(tokensStorages: ServerDictionary<TokensDataStore>, activities: [MappedToDateActivityOrTransaction] = []) {
+    init(activities: [MappedToDateActivityOrTransaction] = []) {
         items = activities
-        self.tokensStorages = tokensStorages
     }
 
     static func sorted(activities: [ActivityRowModel]) -> [MappedToDateActivityOrTransaction] {
@@ -136,12 +132,12 @@ struct ActivitiesViewModel {
                         //Special case to support keywords like "Sent CoFi"
                         data = content.filter { data -> Bool in
                             (data.activityName?.lowercased().contains(twoKeywords.0) ?? false) &&
-                                    (data.getTokenSymbol(fromTokensStorages: tokensStorages)?.lowercased().contains(twoKeywords.1) ?? false)
+                                    (data.getTokenSymbol()?.lowercased().contains(twoKeywords.1) ?? false)
                         }
                     } else {
                         data = content.filter { data -> Bool in
                             (data.activityName?.lowercased().contains(valueToSearch) ?? false) ||
-                                    (data.getTokenSymbol(fromTokensStorages: tokensStorages)?.lowercased().contains(valueToSearch) ?? false)
+                                    (data.getTokenSymbol()?.lowercased().contains(valueToSearch) ?? false)
                         }
                     }
 

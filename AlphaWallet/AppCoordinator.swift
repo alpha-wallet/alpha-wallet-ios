@@ -335,7 +335,7 @@ extension AppCoordinator: InCoordinatorDelegate {
     func didRestart(in coordinator: InCoordinator, wallet: Wallet) {
         keystore.recentlyUsedWallet = wallet
 
-        coordinator.navigationController.dismiss(animated: true) //??Do we really need to do it here?
+        coordinator.navigationController.dismiss(animated: true)
         removeCoordinator(coordinator)
 
         showTransactions(for: keystore.currentWallet, animated: false)

@@ -181,38 +181,34 @@ class GetContractInteractions {
                 return
             }
         }
-        Alamofire.request(etherscanURL).validate().responseJSON { response in
+        
+        Alamofire.request(etherscanURL).validate().responseJSON(queue: queue, options: [], completionHandler: { response in
             switch response.result {
             case .success(let value):
-                //Performance: process in background so UI don't have a chance of blocking if there's a long list of contracts
-                DispatchQueue.global().async {
-                    let json = JSON(value)
-                    let contracts: [(String, Int?)] = json["result"].map { _, transactionJson in
-                        let blockNumber = transactionJson["blockNumber"].string.flatMap { Int($0) }
-                        if transactionJson["input"] != "0x" {
-                            //every transaction that has input is by default a transaction to a contract
-                            //Note: etherscan API only returns contractAddress for this call
-                            //if it is an initialisation of a contract
-                            if transactionJson["contractAddress"].stringValue == "" {
-                                return (transactionJson["to"].stringValue, blockNumber)
-                            } else {
-                                return (transactionJson["contractAddress"].stringValue, blockNumber)
-                            }
+                let json = JSON(value)
+                let contracts: [(String, Int?)] = json["result"].map { _, transactionJson in
+                    let blockNumber = transactionJson["blockNumber"].string.flatMap { Int($0) }
+                    if transactionJson["input"] != "0x" {
+                        //every transaction that has input is by default a transaction to a contract
+                        //Note: etherscan API only returns contractAddress for this call
+                        //if it is an initialisation of a contract
+                        if transactionJson["contractAddress"].stringValue == "" {
+                            return (transactionJson["to"].stringValue, blockNumber)
+                        } else {
+                            return (transactionJson["contractAddress"].stringValue, blockNumber)
                         }
-                        return ("", blockNumber)
                     }
-                    let nonEmptyContracts = contracts
-                            .map { $0.0 }
-                            .filter { !$0.isEmpty }
-                    let uniqueNonEmptyContracts = Set(nonEmptyContracts).compactMap { AlphaWallet.Address(uncheckedAgainstNullAddress: $0) }
-                    let maxBlockNumber = contracts.compactMap { $0.1 } .max()
-                    DispatchQueue.main.async {
-                        completion(uniqueNonEmptyContracts, maxBlockNumber)
-                    }
+                    return ("", blockNumber)
                 }
+                let nonEmptyContracts = contracts
+                        .map { $0.0 }
+                        .filter { !$0.isEmpty }
+                let uniqueNonEmptyContracts = Set(nonEmptyContracts).compactMap { AlphaWallet.Address(uncheckedAgainstNullAddress: $0) }
+                let maxBlockNumber = contracts.compactMap { $0.1 } .max()
+                completion(uniqueNonEmptyContracts, maxBlockNumber)
             case .failure:
                 completion([], nil)
             }
-        }
+        })
     }
 }

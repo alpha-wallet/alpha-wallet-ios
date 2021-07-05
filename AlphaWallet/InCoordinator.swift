@@ -229,7 +229,7 @@ class InCoordinator: NSObject, Coordinator {
     }
 
     private func createTokensDatastore(forConfig config: Config, server: RPCServer) -> TokensDataStore {
-        let storage = TokensDataStore(realm: realm, account: wallet, server: server, config: config, assetDefinitionStore: assetDefinitionStore, filterTokensCoordinator: filterTokensCoordinator)
+        let storage = TokensDataStore(realm: realm, account: wallet, server: server, config: config, assetDefinitionStore: assetDefinitionStore)
         storage.priceDelegate = self
         return storage
     }
@@ -242,8 +242,9 @@ class InCoordinator: NSObject, Coordinator {
         assert(!tokensStorages.isEmpty)
 
         let tokensStorage = tokensStorages[server]
-        let etherToken = TokensDataStore.etherToken(forServer: server)
+
         tokensStorage.tokensModel.subscribe { [weak self, weak tokensStorage] tokensModel in
+            let etherToken = TokensDataStore.etherToken(forServer: server)
             guard let strongSelf = self, let tokensStorage = tokensStorage else { return }
             guard let tokens = tokensModel, let eth = tokens.first(where: { $0 == etherToken }) else { return }
             //Defensive. Sometimes crash right after switch networks if price is refreshed just before the TokensStorage is destroyed
@@ -264,7 +265,7 @@ class InCoordinator: NSObject, Coordinator {
     private func setupCallForAssetAttributeCoordinators() {
         callForAssetAttributeCoordinators = .init()
         for each in config.enabledServers {
-            callForAssetAttributeCoordinators[each] = CallForAssetAttributeCoordinator(server: each, assetDefinitionStore: self.assetDefinitionStore)
+            callForAssetAttributeCoordinators[each] = CallForAssetAttributeCoordinator(server: each, assetDefinitionStore: assetDefinitionStore)
         }
     }
 
@@ -327,9 +328,9 @@ class InCoordinator: NSObject, Coordinator {
         for each in config.enabledServers {
             nativeCryptoCurrencyBalances[each] = createCryptoCurrencyBalanceSubscribable(forServer: each)
             let tokensStorage = tokensStorages[each]
-            let etherToken = TokensDataStore.etherToken(forServer: each)
 
             tokensStorage.tokensModel.subscribe { [weak self] tokensModel in
+                let etherToken = TokensDataStore.etherToken(forServer: each)
                 guard let strongSelf = self, let tokens = tokensModel, let eth = tokens.first(where: { $0 == etherToken }) else {
                     return
                 }
@@ -790,7 +791,7 @@ class InCoordinator: NSObject, Coordinator {
     private func removeServer(_ server: CustomRPC) {
         //Must disable server first because we (might) not have done that if the user had disabled and then remove the server in the UI at the same time. And if we fallback to mainnet when an enabled server's chain ID is not found, this can lead to mainnet appearing twice in the Wallet tab
         let servers = config.enabledServers.filter { $0.chainID != server.chainID }
-        var config = config
+        var config = self.config
         config.enabledServers = servers
         guard let i = RPCServer.customRpcs.firstIndex(of: server) else { return }
         RPCServer.customRpcs.remove(at: i)

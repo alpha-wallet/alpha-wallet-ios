@@ -62,6 +62,7 @@ class TokenAdaptor {
             //TODO Event support, if/when designed, for non-OpenSea. Probably need `distinct` or something to that effect
             let token = getToken(name: self.token.name, symbol: self.token.symbol, forTokenIdOrEvent: .tokenId(tokenId: tokenInt), index: UInt16(index), inWallet: account, server: server)
             tokens.append(token)
+
             return bundle(tokens: tokens)
         }
     }
